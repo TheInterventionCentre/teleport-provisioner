@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+
+# Upgrade the base system
+sudo apt update
+sudo apt dist-upgrade -y
+
+# Install and enable docker
+sudo apt install docker.io -y
+sudo systemctl enable docker --now
+
+# Start nginx proxy
+sudo docker run -d -p 443:443 -p 80:80 \
+    --name nginx-proxy \
+    --volume certs:/etc/nginx/certs \
+    --volume vhost:/etc/nginx/vhost.d \
+    --volume html:/usr/share/nginx/html \
+    -v /var/run/docker.sock:/tmp/docker.sock:ro nginxproxy/nginx-proxy
+
+sudo docker run -d \
+    --name nginx-proxy-acme \
+    --volumes-from nginx-proxy \
+    --volume /var/run/docker.sock:/var/run/docker.sock:ro \
+    --volume acme:/etc/acme.sh \
+    --env "DEFAULT_EMAIL=rafael.palomar@ous-research.no" \
+    nginxproxy/acme-companion
+
+# Generate teleport configuration
+sudo mkdir -p /teleport/config /teleport/data
+
+# Configure teleport
+# sudo docker run --hostname teleport.ivs.ai --rm \
+#     --entrypoint=/bin/sh \
+#     -v /teleport/config:/etc/teleport \
+#     quay.io/gravitational/teleport:9.3.7 -c "teleport configure > /etc/teleport/teleport.yaml"
+
+sudo cat <<EOF | sudo tee -a /teleport/config/teleport.yaml
+version: v2
+teleport:
+  nodename: ${nodename}
+  data_dir: /var/lib/teleport
+  log:
+    output: stderr
+    severity: INFO
+    format:
+      output: text
+  ca_pin: []
+  diag_addr: ""
+auth_service:
+  enabled: "yes"
+  listen_addr: 0.0.0.0:3025
+  proxy_listener_mode: multiplex
+ssh_service:
+  enabled: "yes"
+  labels:
+    env: example
+  commands:
+  - name: hostname
+    command: [hostname]
+    period: 1m0s
+proxy_service:
+  enabled: "yes"
+  proxy_protocol: on
+  web_listen_addr: 0.0.0.0:3080
+  public_addr: ${nodename}
+  https_keypairs: []
+  acme: {}
+EOF
+
+
+# Start teleport
+sudo docker run -d --hostname teleport.ivs.ai --name teleport \
+    --restart unless-stopped \
+    -e VIRTUAL_HOST=teleport.ivs.ai \
+    -e VIRTUAL_PORT=3080 \
+    -e VIRTUAL_PROTO=https\
+    -e LETSENCRYPT_HOST=teleport.ivs.ai \
+    -v /teleport/config:/etc/teleport \
+    -v /teleport/data:/var/lib/teleport \
+    -p 3023:3023 -p 3025:3025 --expose 3080 \
+    quay.io/gravitational/teleport:9.3.7
