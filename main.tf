@@ -4,12 +4,17 @@ variable "nodename" {
   default = "teleport.ivs.ai"
 }
 
-variable "web_external_port" {
-  type = number
-  description = "External port interfacing the web ui (through reverse proxy)"
-  default = 80
+variable "acme_companion_debug" {
+  type = bool
+  description = "Enable debug mode for acme companion"
+  default = false
 }
 
+variable "letsencrypt_testcert" {
+  type = bool
+  description = "Enable debug mode for acme companion"
+  default = false
+}
 
 resource "google_storage_bucket" "default" {
   project       = "teleport-gateway-7718"
@@ -52,7 +57,7 @@ resource "google_compute_firewall" "default" {
 
   allow {
     protocol = "tcp"
-    ports    = ["80", "443", "3023", "3025", "3080", "3389"]
+    ports    = ["80", "443", "3023", "3024", "3025", "3389"]
   }
 
   source_ranges = ["0.0.0.0/0"]
@@ -87,7 +92,7 @@ resource "google_compute_instance" "default" {
     }
   }
 
-  metadata_startup_script = templatefile("./scripts/startup.sh.tftpl", {nodename=var.nodename, webexternalport=var.web_external_port})
+  metadata_startup_script = templatefile("./scripts/startup.sh.tftpl", {nodename=var.nodename, acme_companion_debug=var.acme_companion_debug, letsencrypt_testcert=var.letsencrypt_testcert})
 
   service_account {
     # Google recommends custom service accounts that have cloud-platform scope and permissions granted via IAM Roles.

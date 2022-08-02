@@ -9,7 +9,7 @@ sudo apt install docker.io -y
 sudo systemctl enable docker --now
 
 # Start nginx proxy
-sudo docker run -d -p 443:443 -p 80:80 \
+sudo docker run -d -p 443:443 -p 80:80  \
     --name nginx-proxy \
     --volume certs:/etc/nginx/certs \
     --volume vhost:/etc/nginx/vhost.d \
@@ -21,26 +21,22 @@ sudo docker run -d \
     --volumes-from nginx-proxy \
     --volume /var/run/docker.sock:/var/run/docker.sock:ro \
     --volume acme:/etc/acme.sh \
-    --env "DEFAULT_EMAIL=rafael.palomar@ous-research.no" \
+    -e DEFAULT_EMAIL=rafael.palomar@ous-research.no \
+    -e DEBUG=${acme_companion_debug} \
     nginxproxy/acme-companion
 
 # Generate teleport configuration
 sudo mkdir -p /teleport/config /teleport/data
 
-# Configure teleport
-# sudo docker run --hostname teleport.ivs.ai --rm \
-#     --entrypoint=/bin/sh \
-#     -v /teleport/config:/etc/teleport \
-#     quay.io/gravitational/teleport:9.3.7 -c "teleport configure > /etc/teleport/teleport.yaml"
-
+# Teleport configuration file
 sudo cat <<EOF | sudo tee -a /teleport/config/teleport.yaml
-version: v2
+version: v1
 teleport:
   nodename: ${nodename}
   data_dir: /var/lib/teleport
   log:
     output: stderr
-    severity: INFO
+    severity: DEBUG
     format:
       output: text
   ca_pin: []
@@ -48,9 +44,9 @@ teleport:
 auth_service:
   enabled: "yes"
   listen_addr: 0.0.0.0:3025
-  proxy_listener_mode: multiplex
+  proxy_listener_mode: separate
 ssh_service:
-  enabled: "yes"
+  enabled: "no"
   labels:
     env: example
   commands:
@@ -61,20 +57,23 @@ proxy_service:
   enabled: "yes"
   proxy_protocol: on
   web_listen_addr: 0.0.0.0:3080
-  public_addr: ${nodename}
+  ssh_public_addr: ${nodename}:3023
+  tunnel_public_addr: ${nodename}:3024
+  public_addr: ${nodename}:443
   https_keypairs: []
   acme: {}
 EOF
 
 
 # Start teleport
-sudo docker run -d --hostname teleport.ivs.ai --name teleport \
+sudo docker run -d --hostname ${nodename} --name teleport \
     --restart unless-stopped \
-    -e VIRTUAL_HOST=teleport.ivs.ai \
+    -e VIRTUAL_HOST=${nodename} \
     -e VIRTUAL_PORT=3080 \
     -e VIRTUAL_PROTO=https\
-    -e LETSENCRYPT_HOST=teleport.ivs.ai \
+    -e LETSENCRYPT_HOST=${nodename} \
+    -e LETSENCRYPT_TEST=${letsencrypt_testcert}\
     -v /teleport/config:/etc/teleport \
     -v /teleport/data:/var/lib/teleport \
-    -p 3023:3023 -p 3025:3025 --expose 3080 \
+    -p 3023:3023 -p 3024:3024 -p 3025:3025 --expose 3080 \
     quay.io/gravitational/teleport:9.3.7
